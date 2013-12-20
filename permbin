@@ -1,0 +1,247 @@
+% script to test the property of the binomial and permutation test when
+% the classification accuracy is estimated through a cross-validation 
+% scheme. The script generates accurracy distributions from random data. 
+% Each simulation consists of 
+% ntrls trials. These trials have nftrs features. The cross-validation
+% scheme is defined by nflds which define the number of folds. nflds equals
+% 2 means a 2-fold cross-validation. nflds equals the number of trials 
+% means a leave-one-out cross-validation. The number of repetitions of the 
+% cross-validation is nrep. It must be equals to 1 in case of
+% leave-one-out cross-validation. If you want to use the permutation test,
+% you should set nperm the number of permutation, for example, 999. If you
+% do not want to test the number of permuation, nperm should be set to 0.
+% The number of simulation is defined by ntsts. For each simulation, the
+% script will generate two datasets. The accuracy is estimated on the first
+% one throught the cross-validation scheme. The empirical binomial
+% distribution is estimated by training the classifier on the first 
+% dataset and testing on the second dataset. Finally, the effect of the
+% cross-validation are tested by training on N-1 folds from the first
+% dataset and testing on a fold from the second dataset.
+% The default classifier is LDA but you can change to SVM by changing meth
+% from 1 to 2.
+% author: Quentin Noirhomme, Cyclotron Research Centre, University of Liège
+% 
+% Copyright (C) 2013  Quentin Noirhomme
+% 
+%     This program is free software: you can redistribute it and/or modify
+%     it under the terms of the GNU General Public License as published by
+%     the Free Software Foundation, either version 3 of the License, or
+%     (at your option) any later version.
+% 
+%     This program is distributed in the hope that it will be useful,
+%     but WITHOUT ANY WARRANTY; without even the implied warranty of
+%     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+%     GNU General Public License for more details.
+% 
+%     You should have received a copy of the GNU General Public License
+%     along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% define parameters of the simulation
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+ntrls=100 % number of trials
+nftrs=40 % number of features
+ntsts=10000 % number of simulation
+nflds=10 % number of folds. Set to number of trials for leave-one-out
+nrep=10 % number of repetition of the cross-validation
+nperm=0 % number of permutation for permutation test, set to 0 if you do
+% not want to use a permutation test
+meth=1; % select a method for classifying data. 1= LDA; 2= SVM.
+thrl=.5; % pvalue of the labels. 0.5 both labels have indetical probablility
+% .75 one label has .75 probability and the other .25
+thrs=51/100; % thresholds for the permutation test (to apply)
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% main loop
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+presults=zeros(ntsts,1); % results of the CV
+oresults=zeros(ntsts,1); % results on a separate test set of the same size than CV
+qresults=zeros(ntsts,1); % results on a separate test set with CV
+if nperm>0, permults=ones(ntsts,1); end
+for i=1:ntsts, % loop on the number of simulation
+    % generate first dataset
+    data=rand(ntrls,nftrs)>0.5; % random zeros and ones
+    labels=zeros(ntrls,1);
+    while sum(labels==1)~=sum(labels==0),
+        labels=rand(ntrls,1)>thrl;
+    end
+    clrep=zeros(nrep,1);
+    clreq=zeros(nrep,1);
+    % generate second dataset
+    dataq=rand(ntrls,nftrs)>0.5;
+    labelsq=zeros(ntrls,1);
+    while sum(labelsq==1)~=sum(labelsq==0),
+        labelsq=rand(ntrls,1)>thrl;
+    end
+    for r=1:nrep, % loop on the number of repetition of the CV
+        alin=randperm(ntrls); % randomly permutet trials
+        clsrf=zeros(nflds,1);
+        clsrq=zeros(nflds,1);
+        for j=1:nflds, % for each fold
+            % test trials
+            teind=alin((j-1)*ntrls/nflds+1:j*ntrls/nflds); 
+            % training trials
+            trind=alin([1:(j-1)*ntrls/nflds j*ntrls/nflds+1:ntrls]); 
+            try % decide which classifier to use
+                switch meth
+                    case 1
+                        % train and test classifier on first dataset
+                        class1=classify(squeeze(data(teind,:)),squeeze(data(trind,:)),...
+                            labels(trind)); 
+                        % train classifier on first dataset and test on 
+                        % second dataset
+                        class2=classify(dataq(teind,:),data(trind,:),...
+                            labels(trind));
+                    case 2
+                        svmstruct=svmtrain(double(data(trind,:)),labels(trind));
+                        class1=svmclassify(svmstruct,double(data(teind,:)));
+                        class2=svmclassify(svmstruct,double(dataq(teind,:)));
+                end
+            catch % if training of the classifier fails
+                class1=ones(length(teind),1)*2; % to have a label different of both classes
+                class2=ones(length(teind),1)*2;
+            end
+            if thrl==0.5,
+                % estimate accuracy on test set
+                %             clsrf(j)=sum(class==labels(teind));
+                clsrf(j)=mean(class1==labels(teind)); % first dataset
+                clsrq(j)=mean(class2==labelsq(teind)); % second dataset
+            else % in case where probability are not equals
+                clsrf(j)=mean(class1(labels(teind)==1)==labels(teind(labels(teind)==1)));
+                clsrq(j)=mean(class2(labelsq(teind)==1)==labelsq(teind(labelsq(teind)==1)));
+            end
+        end % end fold loop
+        clrep(r)=mean(clsrf); % average accuracy on all folds
+        clreq(r)=mean(clsrq);
+    end % end repetition loop
+    % compute average accuracy from all repetitions
+    presults(i)=mean(clrep);
+    qresults(i)=mean(clreq);
+    % train classification algorithm on the first dataset and test 
+    % on a separate data set
+    try
+        switch meth
+            case 1
+                class=classify(dataq,data,labels);
+            case 2
+                svmstruct=svmtrain(double(data),labels);
+                class=svmclassify(svmstruct,double(dataq));
+        end
+    catch
+        class=ones(ntrls,1)*2;
+    end
+    if thrl==0.5,
+        oresults(i)=mean(class==labelsq);
+    else % in case where probability are not equals
+        oresults(i)=mean(class(labelsq==1)==labelsq(labelsq==1));
+    end
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    % permutation test
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    if nperm > 0 & presults(i)>=thrs, 
+        k=0;
+        tmper=zeros(nperm+1,1); % matrix of the results of the permutation test
+        tmper(1)=presults(i); % results already obtained comes from a permutation
+        stop=0;
+        while k<nperm && ~stop,
+            k=k+1;
+            % randomly permute labels
+            labels=labels(randperm(length(labels)));
+            clrep=zeros(nrep,1);
+            for r=1:nrep, % loop on the number of repetitions
+                alin=randperm(ntrls); % randomly permute trials
+                clsrf=zeros(nflds,1);
+                for j=1:nflds, % loop on the number of folds
+                    teind=alin((j-1)*ntrls/nflds+1:j*ntrls/nflds);
+                    trind=alin([1:(j-1)*ntrls/nflds j*ntrls/nflds+1:ntrls]);
+                    try % select a classifier
+                        switch meth
+                            case 1
+                                class=classify(squeeze(data(teind,:)),squeeze(data(trind,:)),...
+                                    labels(trind));
+                            case 2
+                                svmstruct=svmtrain(double(data(trind,:)),labels(trind));
+                                class=svmclassify(svmstruct,double(data(teind,:)));
+                        end
+                    catch
+                        class=ones(length(teind),1)*2;
+                    end
+                    if thrl==0.5,
+                        clsrf(j)=sum(class==labels(teind));
+                    else % in case where probability are not equals
+                        clsrf(j)=sum(class(labels(teind)==1)==labels(teind(labels(teind)==1)));
+                    end
+                end
+                clrep(r)=mean(clsrf);
+            end
+            tmper(k+1)=mean(clrep)/(ntrls/nflds);
+            if mod(k,100)==0, % check if useful to continue
+                if sum(tmper(1:k+1)>=tmper(1))/(k+1)>0.1,
+                    stop=1;
+                end
+            end
+        end
+        permults(i)=sum(tmper(1:k+1)>=tmper(1))/(k+1);
+    end % end permutation test
+end % end simulation loop
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% plot the results
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% xout=.0125:.025:1; % bin of the histogram
+% % plot histogram of the accuracy for the empirical binomial
+% figure, bar(xout,hist(oresults,xout))
+% if nperm>0, % in case of a permutation test
+%     msp2=zeros(ntsts,1);
+%     k=0;
+%     for xo=xout,
+%         k=k+1;
+%         msp2(presults>=(xo-0.0125)& presults<(xo+0.0125))=k;
+%     end
+%     % plot the histogram of the accuracy estimated with cross-validation
+%     figure, bar(xout,hist(presults,xout))
+%     hold on
+%     % draw a line for at permutation pvalue equals .05
+%     plot(xout,ones(1,40)*0.05*max(hist(presults,xout)),'k')
+%     % plot the permutation pvalue for accuracies above .05
+%     for k=1:length(xout),
+%         tpindi=find(msp2==k);
+%         if ~isempty(tpindi),
+%             if any(permults(tpindi)<1),
+%                 scatter(presults(tpindi),permults(tpindi)*max(hist(presults,xout)),'.r')
+%             end
+%         end
+%     end
+% else
+%     % plot the histogram of the accuracy estimated with cross-validation
+%     figure, bar(xout,hist(presults,xout))
+% end
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Compute binomial lower bound using Jeffreys'prior
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% N=100; p=62; pe=p/N; z=2.33;
+% pl=(pe+(2*(N-2*p)*z*sqrt(.5))/(2*N*(N+3)))-z*sqrt(pe*(1-pe)/(N+2.5))
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% build and plot cumulative density function
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% mycdf=zeros(100,1);
+% oycdf=zeros(100,1);
+% qycdf=zeros(100,1);
+% for i=1:100,
+%     % cdf of accuracies estimated with cross-validation
+%     mycdf(i)=sum(presults<=i/100)./ntsts;
+%     % cdf of accuracies estimated on an independent data set. Empirical 
+%     % binomial distribution.
+%     oycdf(i)=sum(oresults<=i/100)./ntsts;
+%     % cdf of accuracies estimated by training the classification algorithm
+%     % on folds from one dataset and testing on an independent test fold
+%     % from another dataset
+%     qycdf(i)=sum(qresults<=i/100)./ntsts;
+% end
+% po=binocdf((0.01:0.01:1)*ntrls,ntrls,.5);
+% figure, plot((1:100)/100,po,'LineWidth',4)
+% hold on
+% plot((1:100)/100,mycdf,'r','LineWidth',4)
+% plot((1:100)/100,oycdf,'-y','LineWidth',4)
+% plot((1:100)/100,qycdf,'k','LineWidth',4)
